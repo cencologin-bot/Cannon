@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Cannon AutoFire</string>
+    <string name="accessibility_description">Permite abrir el menú de acciones y seleccionar únicamente ¡Fuego! cuando se autoriza.</string>
+</resources>
