@@ -17,8 +17,6 @@ class GameAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile var instance: GameAccessibilityService? = null
         private const val MENU_TIMEOUT_MS = 1500L
-        /** Espera entre abrir el menú (mano) y pulsar «¡Fuego!». */
-        const val FIRE_DELAY_MS = 4000L
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -43,7 +41,7 @@ class GameAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
     override fun onDestroy() { instance = null; super.onDestroy() }
 
-    // El menú se detecta por evento; al aparecer «¡Fuego!» se espera FIRE_DELAY_MS y se pulsa.
+    // El menú se detecta por evento; al aparecer «¡Fuego!» se espera el tiempo configurado (RoiStore.fireDelayMs) y se pulsa.
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (pending == null || event == null || menuSeen) return
         val t = event.eventType
@@ -74,14 +72,14 @@ class GameAccessibilityService : AccessibilityService() {
         return p.x to p.y
     }
 
-    // Menú abierto detectado: se espera FIRE_DELAY_MS y entonces se pulsa «¡Fuego!».
+    // Menú abierto detectado: se espera el tiempo configurado y entonces se pulsa «¡Fuego!».
     private fun checkMenu() {
         if (pending == null || menuSeen || fallbackUsed) return
         // El menú se da por abierto si hay nodo «¡Fuego!» o si la visión reconoce el menú.
         if (findFireNode(rootInActiveWindow) == null && vision()?.menuOpen != true) return
         menuSeen = true
         handler.removeCallbacks(timeout)
-        handler.postDelayed(fireRunnable, FIRE_DELAY_MS)
+        handler.postDelayed(fireRunnable, RoiStore.fireDelayMs(this))
     }
 
     private fun fireNow() {
@@ -98,7 +96,7 @@ class GameAccessibilityService : AccessibilityService() {
         if (pending == null) return
         // Con visión calibrada, si el menú no apareció no se toca nada a ciegas.
         if (vision() != null) { finish(false); return }
-        fallback(maxOf(0L, FIRE_DELAY_MS - MENU_TIMEOUT_MS)) // completa los 4 s desde la mano
+        fallback(maxOf(0L, RoiStore.fireDelayMs(this) - MENU_TIMEOUT_MS)) // completa la espera desde la mano
     }
 
     private fun fallback(wait: Long) {

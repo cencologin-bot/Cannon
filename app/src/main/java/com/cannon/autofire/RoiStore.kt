@@ -52,4 +52,10 @@ object RoiStore {
     fun loadMenuSig(c: Context): ByteArray? =
         c.getSharedPreferences("roi", Context.MODE_PRIVATE).getString("menusig", null)
             ?.let { try { Base64.decode(it, Base64.NO_WRAP) } catch (_: Exception) { null } }
+
+    /** Espera entre abrir el menú (mano) y pulsar «¡Fuego!», en ms. Ajustable desde la burbuja. */
+    fun fireDelayMs(c: Context): Long = c.getSharedPreferences("roi", Context.MODE_PRIVATE).getLong("fire_delay", 4000L)
+    fun setFireDelayMs(c: Context, ms: Long) {
+        c.getSharedPreferences("roi", Context.MODE_PRIVATE).edit().putLong("fire_delay", ms).apply()
+    }
 }

@@ -155,7 +155,7 @@ class AutoFireService : Service() {
                 // al volver a verde continúa solo.
                 if (running && !firing && now >= nextShotAt) {
                     firing = true
-                    updateStatus("Verde · mano, ¡Fuego! en ${GameAccessibilityService.FIRE_DELAY_MS / 1000} s")
+                    updateStatus("Verde · mano, ¡Fuego! en ${"%.1f".format(RoiStore.fireDelayMs(this) / 1000.0)} s")
                     GameAccessibilityService.instance?.performFireSequence { ok ->
                         firing = false
                         val t = SystemClock.elapsedRealtime()
@@ -180,83 +180,148 @@ class AutoFireService : Service() {
         } finally { image.close() }
     }
 
+    // ---------- Burbuja compacta ----------
+    private val ui = Handler(Looper.getMainLooper())
+    private var dotView: TextView? = null
+    private var panelView: LinearLayout? = null
+    private var settingsView: View? = null
+    private var toggleBtn: TextView? = null
+    private var planBBtn: TextView? = null
+
+    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
+    private fun pill(color: Int, radius: Int) = android.graphics.drawable.GradientDrawable().apply {
+        setColor(color); cornerRadius = dp(radius).toFloat()
+    }
+    private fun chip(label: String, color: Int = Color.rgb(62, 72, 98), onClick: () -> Unit) = TextView(this).apply {
+        text = label; setTextColor(Color.WHITE); textSize = 12f
+        setPadding(dp(10), dp(6), dp(10), dp(6))
+        background = pill(color, 12)
+        setOnClickListener { onClick() }
+    }
+    private fun row(vararg v: View) = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        v.forEach { addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(2), dp(2), dp(2), dp(2)) }) }
+    }
+
+    /** Cierra el panel (para que no salga en la captura) y ejecuta la acción un instante después. */
+    private fun collapseThen(action: () -> Unit) { setExpanded(false); ui.postDelayed({ action() }, 300) }
+
+    private fun startAutomation() {
+        if (projection == null) { updateStatus("Falta autorizar captura"); return }
+        running = true; failures = 0; nextShotAt = 0L
+        updateStatus("Activo · dispara mientras el faro esté verde")
+        setExpanded(false)
+    }
+
     private fun showBubble() {
         if (!android.provider.Settings.canDrawOverlays(this)) return
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(14, 10, 14, 10)
-            setBackgroundColor(Color.argb(235, 35, 42, 56))
-        }
-        val header = TextView(this).apply {
-            text = "● Cannon AutoFire  ⋮"
-            setTextColor(Color.WHITE); textSize = 14f
-            setOnClickListener { toggleExpanded() }
+        val green = Color.rgb(47, 158, 68); val red = Color.rgb(192, 57, 43)
+        val root = FrameLayout(this)
+
+        val dot = TextView(this).apply {
+            text = "●"; textSize = 18f; gravity = Gravity.CENTER; setTextColor(Color.LTGRAY)
+            background = pill(Color.argb(210, 35, 42, 56), 18)
+            layoutParams = FrameLayout.LayoutParams(dp(36), dp(36))
         }
         status = TextView(this).apply {
-            text = "Captura preparada"
-            setTextColor(Color.WHITE); textSize = 12f
+            text = "Captura preparada"; setTextColor(Color.WHITE); textSize = 11f; maxWidth = dp(190)
+        }
+
+        // Ajustes (ocultos hasta pulsar ⚙)
+        val delayLbl = TextView(this).apply { setTextColor(Color.WHITE); textSize = 12f; gravity = Gravity.CENTER; minWidth = dp(44) }
+        fun showDelay() { delayLbl.text = "%.1f s".format(RoiStore.fireDelayMs(this) / 1000.0) }
+        fun step(d: Long) {
+            RoiStore.setFireDelayMs(this, (RoiStore.fireDelayMs(this) + d).coerceIn(500L, 15000L)); showDelay()
+        }
+        showDelay()
+        val planB = chip(planBText()) {
+            RoiStore.setPlanB(this, !RoiStore.planB(this)); refreshUiNow()
+        }
+        planBBtn = planB
+        val settings = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
             visibility = View.GONE
+            addView(row(
+                chip("Faro") { collapseThen { showSelector() } },
+                chip("Mano") { collapseThen { showPointPicker("hand", "Posición del icono de la mano") } },
+                chip("Fuego") { collapseThen { showPointPicker("fire", "Abre el menú y marca la opción ¡Fuego!") } }))
+            addView(row(
+                chip("Menú") { collapseThen {
+                    if (projection == null) updateStatus("Falta autorizar captura")
+                    else { calibrateMenu = true; updateStatus("Calibrando menú... (debe estar abierto)") }
+                } }, planB))
+            addView(row(
+                TextView(this@AutoFireService).apply { text = "Espera ¡Fuego!"; setTextColor(Color.WHITE); textSize = 12f },
+                chip("−") { step(-500L) }, delayLbl, chip("+") { step(500L) }))
         }
-        val start = Button(this).apply {
-            text = "ACTIVAR"
-            setOnClickListener {
-                if (projection == null) status.text = "Falta autorizar captura"
-                else { running = true; failures = 0; nextShotAt = 0L; updateStatus("Activo · dispara mientras el faro esté verde") }
-            }
+        settingsView = settings
+
+        val toggle = chip("▶ Activar", green) { if (running) stopAutomation() else startAutomation() }
+        toggleBtn = toggle
+        val gear = chip("⚙") { settings.visibility = if (settings.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+        val minimize = chip("▾") { setExpanded(false) }
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(8), dp(10), dp(8))
+            background = pill(Color.argb(235, 35, 42, 56), 14)
+            visibility = View.GONE
+            addView(status)
+            addView(row(toggle, gear, minimize))
+            addView(settings)
         }
-        val stop = Button(this).apply {
-            text = "DETENER"
-            setOnClickListener { stopAutomation() }
-        }
-        val sel = Button(this).apply {
-            text = "SELECTOR"
-            setOnClickListener { showSelector() }
-        }
-        val hand = Button(this).apply {
-            text = "MANO"
-            setOnClickListener { showPointPicker("hand", "Posición del icono de la mano") }
-        }
-        val fire = Button(this).apply {
-            text = "FUEGO"
-            setOnClickListener { showPointPicker("fire", "Abre el menú y marca la opción ¡Fuego!") }
-        }
-        val menuCal = Button(this).apply {
-            text = "MENÚ"
-            setOnClickListener {
-                if (projection == null) updateStatus("Falta autorizar captura")
-                else { calibrateMenu = true; updateStatus("Calibrando menú... (debe estar abierto)") }
-            }
-        }
-        val planB = Button(this).apply {
-            text = planBText()
-            setOnClickListener { RoiStore.setPlanB(this@AutoFireService, !RoiStore.planB(this@AutoFireService)); text = planBText() }
-        }
-        val extras = listOf(sel, hand, fire, menuCal, planB)
-        start.visibility = View.GONE
-        stop.visibility = View.GONE
-        extras.forEach { it.visibility = View.GONE }
-        root.addView(header); root.addView(status)
-        root.addView(start); root.addView(stop)
-        extras.forEach { root.addView(it) }
+        panelView = panel; dotView = dot
+        root.addView(dot); root.addView(panel)
+        root.alpha = 0.8f
+
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.TOP or Gravity.END; x = 16; y = 240 }
-        header.setOnTouchListener(object : View.OnTouchListener {
+        ).apply { gravity = Gravity.TOP or Gravity.END; x = 8; y = 240 }
+
+        // Arrastrar desde el punto o desde el texto de estado; un toque corto en el punto abre el panel.
+        fun drag(onTap: (() -> Unit)?) = object : View.OnTouchListener {
             var sx = 0f; var sy = 0f; var ox = 0; var oy = 0
             override fun onTouch(v: View, e: MotionEvent): Boolean {
                 when (e.action) {
-                    MotionEvent.ACTION_DOWN -> { sx=e.rawX; sy=e.rawY; ox=lp.x; oy=lp.y; return true }
-                    MotionEvent.ACTION_MOVE -> { lp.x=ox-(e.rawX-sx).toInt(); lp.y=oy+(e.rawY-sy).toInt(); window?.updateViewLayout(root,lp); return true }
-                    MotionEvent.ACTION_UP -> { if (kotlin.math.abs(e.rawX-sx)<8 && kotlin.math.abs(e.rawY-sy)<8) toggleExpanded(); return true }
+                    MotionEvent.ACTION_DOWN -> { sx = e.rawX; sy = e.rawY; ox = lp.x; oy = lp.y; return true }
+                    MotionEvent.ACTION_MOVE -> { lp.x = ox - (e.rawX - sx).toInt(); lp.y = oy + (e.rawY - sy).toInt(); window?.updateViewLayout(root, lp); return true }
+                    MotionEvent.ACTION_UP -> {
+                        if (kotlin.math.abs(e.rawX - sx) < 8 && kotlin.math.abs(e.rawY - sy) < 8) onTap?.invoke()
+                        return true
+                    }
                 }
                 return false
             }
-        })
+        }
+        dot.setOnTouchListener(drag { setExpanded(true) })
+        status.setOnTouchListener(drag(null))
         window?.addView(root, lp)
         bubble = root
+        refreshUiNow()
+    }
+
+    private fun setExpanded(e: Boolean) {
+        expanded = e
+        dotView?.visibility = if (e) View.GONE else View.VISIBLE
+        panelView?.visibility = if (e) View.VISIBLE else View.GONE
+        if (!e) settingsView?.visibility = View.GONE
+        bubble?.alpha = if (e) 1f else 0.8f
+    }
+
+    private fun refreshUiNow() {
+        dotView?.setTextColor(when {
+            running && firing -> Color.rgb(255, 193, 7)
+            running -> Color.rgb(77, 255, 110)
+            else -> Color.LTGRAY
+        })
+        toggleBtn?.apply {
+            text = if (running) "■ Detener" else "▶ Activar"
+            background = pill(if (running) Color.rgb(192, 57, 43) else Color.rgb(47, 158, 68), 12)
+        }
+        planBBtn?.text = planBText()
     }
 
     private fun showSelector() {
@@ -324,21 +389,13 @@ class AutoFireService : Service() {
         selector = null
     }
 
-    private fun toggleExpanded() {
-        expanded = !expanded
-        status.visibility = if (expanded) View.VISIBLE else View.GONE
-        for (i in 2 until (bubble as? LinearLayout)?.childCount.orZero()) {
-            (bubble as LinearLayout).getChildAt(i).visibility = if (expanded) View.VISIBLE else View.GONE
-        }
-    }
-    private fun Int?.orZero() = this ?: 0
-
     private fun stopAutomation() {
         running = false
         firing = false
         redSeen = false
         greenStreak = 0
         updateStatus("Detenido")
+        ui.post { refreshUiNow() }
     }
 
     private fun updateStatus(s: String) {
@@ -346,6 +403,7 @@ class AutoFireService : Service() {
         if (key == lastStatus) return
         lastStatus = key
         if (::status.isInitialized) status.post { status.text = "$s\nDisparos: $shots" }
+        ui.post { refreshUiNow() }
         updateNotification(s)
     }
     private fun updateNotification(s: String = if (running) "Automatización activa" else "Detenido") {
