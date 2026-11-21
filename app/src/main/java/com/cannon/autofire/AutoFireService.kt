@@ -19,7 +19,10 @@ class AutoFireService : Service() {
     companion object {
         const val ACTION_STOP = "com.cannon.autofire.STOP"
         const val CHANNEL = "cannon_autofire"
-        const val GREEN_FRAMES = 2   // fotogramas verdes seguidos para confirmar
+        const val GREEN_FRAMES = 2       // fotogramas verdes seguidos para confirmar
+        const val SHOT_GAP_MS = 250L     // pausa mínima entre disparos mientras sigue verde
+        const val RETRY_MS = 1500L       // espera tras un fallo
+        const val MAX_FAILURES = 3       // fallos seguidos antes de detener
         @Volatile var instance: AutoFireService? = null
     }
 
@@ -36,6 +39,8 @@ class AutoFireService : Service() {
     private var lastFrame = 0L
     private var roi = RoiStore.defaults()
     private var greenStreak = 0
+    private var nextShotAt = 0L
+    private var failures = 0
     private var lastStatus = ""
     private var selector: View? = null
     private var previewListener: ((Float, Float, Int) -> Unit)? = null
@@ -124,24 +129,36 @@ class AutoFireService : Service() {
             val color = res[2].toInt()
             previewListener?.invoke(res[0], res[1], color)
             greenStreak = if (color == 2) greenStreak + 1 else 0
+            val now = SystemClock.elapsedRealtime()
             if (color == 1) {
-                redSeen = true
-                updateStatus("Faro rojo · esperando")
+                // Faro rojo: no se inician disparos nuevos (el que está en curso termina).
+                if (running) updateStatus("Faro rojo · en pausa")
             } else if (color == 2 && greenStreak >= GREEN_FRAMES) {
-                if (redSeen && running && !firing) {
-                    redSeen = false
+                // Faro verde: dispara y repite mientras siga verde; si pasa a rojo se pausa y
+                // al volver a verde continúa solo.
+                if (running && !firing && now >= nextShotAt) {
                     firing = true
-                    updateStatus("Verde detectado · ejecutando")
-                    GameAccessibilityService.instance?.performFireSequence {
+                    updateStatus("Verde · disparando")
+                    GameAccessibilityService.instance?.performFireSequence { ok ->
                         firing = false
-                        if (it) shots++
-                        updateStatus(if (it) "Disparo enviado (${GameAccessibilityService.instance?.lastMethod}) · esperando rojo" else "No se pudo seleccionar ¡Fuego!")
+                        val t = SystemClock.elapsedRealtime()
+                        if (ok) {
+                            shots++; failures = 0; nextShotAt = t + SHOT_GAP_MS
+                            updateStatus("Disparo enviado (${GameAccessibilityService.instance?.lastMethod}) · verde, continúa")
+                        } else {
+                            failures++; nextShotAt = t + RETRY_MS
+                            if (failures >= MAX_FAILURES) {
+                                stopAutomation()
+                                updateStatus("Detenido: no se pudo seleccionar ¡Fuego!")
+                            } else updateStatus("No se pudo seleccionar ¡Fuego! · reintentando")
+                        }
                         updateNotification()
                     } ?: run {
                         firing = false
+                        nextShotAt = now + 2000
                         updateStatus("Activa el servicio de accesibilidad")
                     }
-                } else if (!redSeen) updateStatus("Verde sin rearme · esperando rojo")
+                }
             }
         } finally { image.close() }
     }
@@ -167,7 +184,7 @@ class AutoFireService : Service() {
             text = "ACTIVAR"
             setOnClickListener {
                 if (projection == null) status.text = "Falta autorizar captura"
-                else { running = true; updateStatus("Activo · esperando rojo inicial") }
+                else { running = true; failures = 0; nextShotAt = 0L; updateStatus("Activo · dispara mientras el faro esté verde") }
             }
         }
         val stop = Button(this).apply {
