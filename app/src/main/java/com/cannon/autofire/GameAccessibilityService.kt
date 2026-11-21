@@ -16,34 +16,39 @@ class GameAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile var instance: GameAccessibilityService? = null
         private const val MENU_TIMEOUT_MS = 1500L
+        /** Espera entre abrir el menú (mano) y pulsar «¡Fuego!». */
+        const val FIRE_DELAY_MS = 4000L
     }
 
     private val handler = Handler(Looper.getMainLooper())
     private var pending: ((Boolean) -> Unit)? = null
     @Volatile var lastMethod = ""
     private var fallbackUsed = false
+    private var menuSeen = false
+    private val fireRunnable = Runnable { fireNow() }
     private val timeout = Runnable { onMenuTimeout() }
 
     override fun onServiceConnected() { instance = this }
     override fun onInterrupt() {}
     override fun onDestroy() { instance = null; super.onDestroy() }
 
-    // El menú se detecta por evento: en cuanto aparece «¡Fuego!» se pulsa, sin espera fija.
+    // El menú se detecta por evento; al aparecer «¡Fuego!» se espera FIRE_DELAY_MS y se pulsa.
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        if (pending == null || event == null) return
+        if (pending == null || event == null || menuSeen) return
         val t = event.eventType
         if (t == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
-            t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) tryClickFire()
+            t == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED) checkMenu()
     }
 
     fun performFireSequence(done: (Boolean) -> Unit) {
         if (pending != null) { done(false); return }
         pending = done
         fallbackUsed = false
+        menuSeen = false
         handler.postDelayed(timeout, MENU_TIMEOUT_MS)
         val (w, h) = screenSize()
         val hand = RoiStore.loadPoint(this, "hand")
-        tap(w * hand.x, h * hand.y) { tryClickFire() }
+        tap(w * hand.x, h * hand.y) { checkMenu() }
     }
 
     // Tamaño real de pantalla (incluye barras), igual que la captura y el selector.
@@ -58,33 +63,47 @@ class GameAccessibilityService : AccessibilityService() {
         return p.x to p.y
     }
 
-    // Plan B (opcional): «¡Fuego!» no apareció en el árbol de accesibilidad -> tocar su punto guardado.
-    private fun onMenuTimeout() {
-        if (pending == null) return
-        if (!RoiStore.planB(this)) { finish(false); return }
-        fallbackUsed = true
-        val (w, h) = screenSize()
-        val p = RoiStore.loadPoint(this, "fire")
-        tap(w * p.x, h * p.y) {
-            handler.postDelayed({ lastMethod = "coordenadas"; finish(true) }, 150)
-        }
+    // Menú abierto detectado: se espera FIRE_DELAY_MS y entonces se pulsa «¡Fuego!».
+    private fun checkMenu() {
+        if (pending == null || menuSeen || fallbackUsed) return
+        if (findFireNode(rootInActiveWindow) == null) return
+        menuSeen = true
+        handler.removeCallbacks(timeout)
+        handler.postDelayed(fireRunnable, FIRE_DELAY_MS)
     }
 
-    private fun tryClickFire() {
-        if (fallbackUsed) return
+    private fun fireNow() {
         val cb = pending ?: return
-        val node = findFireNode(rootInActiveWindow) ?: return
-        if (clickNode(node)) {
-            handler.removeCallbacks(timeout)
+        if (clickNode(findFireNode(rootInActiveWindow))) {
             pending = null
             lastMethod = "accesibilidad"
             handler.postDelayed({ cb(true) }, 120)
-        }
+        } else fallback(0L) // el menú cambió durante la espera
+    }
+
+    // Menú no detectado a tiempo (o desaparecido): plan B opcional por coordenadas.
+    private fun onMenuTimeout() {
+        if (pending == null) return
+        fallback(maxOf(0L, FIRE_DELAY_MS - MENU_TIMEOUT_MS)) // completa los 4 s desde la mano
+    }
+
+    private fun fallback(wait: Long) {
+        if (!RoiStore.planB(this)) { finish(false); return }
+        fallbackUsed = true
+        handler.postDelayed({
+            if (pending == null) return@postDelayed
+            val (w, h) = screenSize()
+            val p = RoiStore.loadPoint(this, "fire")
+            tap(w * p.x, h * p.y) {
+                handler.postDelayed({ lastMethod = "coordenadas"; finish(true) }, 150)
+            }
+        }, wait)
     }
 
     private fun finish(ok: Boolean) {
         val cb = pending ?: return
         handler.removeCallbacks(timeout)
+        handler.removeCallbacks(fireRunnable)
         pending = null
         cb(ok)
     }

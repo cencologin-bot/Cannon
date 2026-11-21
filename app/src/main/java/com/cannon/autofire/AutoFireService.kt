@@ -138,7 +138,7 @@ class AutoFireService : Service() {
                 // al volver a verde continúa solo.
                 if (running && !firing && now >= nextShotAt) {
                     firing = true
-                    updateStatus("Verde · disparando")
+                    updateStatus("Verde · mano, ¡Fuego! en ${GameAccessibilityService.FIRE_DELAY_MS / 1000} s")
                     GameAccessibilityService.instance?.performFireSequence { ok ->
                         firing = false
                         val t = SystemClock.elapsedRealtime()
