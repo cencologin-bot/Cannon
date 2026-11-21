@@ -82,3 +82,12 @@ Si Actions falla, abre el registro del paso en rojo y pégalo para corregirlo.
 - **MANO**: elige con una mira dónde está el icono de la mano (valor por defecto 94,3 % / 84,3 %).
 - **FUEGO** + **PLAN B**: si «¡Fuego!» no aparece en accesibilidad (menú dibujado sin nodos), tras 1,5 s se toca el punto guardado. Para fijarlo: abre el menú del cañón a mano, pulsa FUEGO en la burbuja, marca la opción «¡Fuego!» y GUARDAR. PLAN B viene desactivado; es menos seguro porque no verifica qué se pulsa, así que comprueba el punto antes de activarlo.
 - El estado indica el método usado: «accesibilidad» o «coordenadas».
+
+## Si no aparece el flujo en Actions
+La carpeta `.github` (empieza por punto) a veces no se sube. En ese caso, en tu repositorio: **Add file → Create new file**, escribe como nombre `.github/workflows/build.yml` (las `/` crean las carpetas), pega el contenido de `COPIA_VISIBLE_build.yml.txt` y pulsa **Commit changes**. El flujo se ejecutará solo.
+
+## Comportamiento con el faro (v7)
+- **Verde**: dispara y repite mientras el faro siga verde (pausa mínima `SHOT_GAP_MS` entre disparos).
+- **Rojo**: no inicia disparos nuevos; el que está en curso termina.
+- **Vuelve a verde**: continúa solo, sin tener que ver rojo antes.
+- Tras 3 fallos seguidos al elegir «¡Fuego!» (`MAX_FAILURES`) se detiene para no repetir toques sin control.
