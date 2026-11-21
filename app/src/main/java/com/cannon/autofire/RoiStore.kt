@@ -3,6 +3,7 @@ package com.cannon.autofire
 import android.content.Context
 import android.graphics.PointF
 import android.graphics.RectF
+import android.util.Base64
 
 /** Guarda el área del faro (coordenadas normalizadas 0..1) elegida con el selector. */
 object RoiStore {
@@ -42,4 +43,13 @@ object RoiStore {
     fun setPlanB(c: Context, on: Boolean) {
         c.getSharedPreferences("roi", Context.MODE_PRIVATE).edit().putBoolean("planb", on).apply()
     }
+
+    fun saveMenuSig(c: Context, sig: ByteArray) {
+        c.getSharedPreferences("roi", Context.MODE_PRIVATE).edit()
+            .putString("menusig", Base64.encodeToString(sig, Base64.NO_WRAP)).apply()
+    }
+
+    fun loadMenuSig(c: Context): ByteArray? =
+        c.getSharedPreferences("roi", Context.MODE_PRIVATE).getString("menusig", null)
+            ?.let { try { Base64.decode(it, Base64.NO_WRAP) } catch (_: Exception) { null } }
 }

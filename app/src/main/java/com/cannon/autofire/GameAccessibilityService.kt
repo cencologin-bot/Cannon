@@ -9,6 +9,7 @@ import android.os.Build
 import android.view.WindowManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 
@@ -27,6 +28,16 @@ class GameAccessibilityService : AccessibilityService() {
     private var menuSeen = false
     private val fireRunnable = Runnable { fireNow() }
     private val timeout = Runnable { onMenuTimeout() }
+    private val poll = object : Runnable {
+        override fun run() {
+            if (pending == null || menuSeen || fallbackUsed) return
+            checkMenu()
+            if (!menuSeen) handler.postDelayed(this, 100)
+        }
+    }
+
+    // Servicio de captura con firma de menú calibrada (visión), si existe.
+    private fun vision(): AutoFireService? = AutoFireService.instance?.takeIf { it.hasMenuVision }
 
     override fun onServiceConnected() { instance = this }
     override fun onInterrupt() {}
@@ -48,7 +59,7 @@ class GameAccessibilityService : AccessibilityService() {
         handler.postDelayed(timeout, MENU_TIMEOUT_MS)
         val (w, h) = screenSize()
         val hand = RoiStore.loadPoint(this, "hand")
-        tap(w * hand.x, h * hand.y) { checkMenu() }
+        tap(w * hand.x, h * hand.y) { checkMenu(); handler.postDelayed(poll, 100) }
     }
 
     // Tamaño real de pantalla (incluye barras), igual que la captura y el selector.
@@ -66,7 +77,8 @@ class GameAccessibilityService : AccessibilityService() {
     // Menú abierto detectado: se espera FIRE_DELAY_MS y entonces se pulsa «¡Fuego!».
     private fun checkMenu() {
         if (pending == null || menuSeen || fallbackUsed) return
-        if (findFireNode(rootInActiveWindow) == null) return
+        // El menú se da por abierto si hay nodo «¡Fuego!» o si la visión reconoce el menú.
+        if (findFireNode(rootInActiveWindow) == null && vision()?.menuOpen != true) return
         menuSeen = true
         handler.removeCallbacks(timeout)
         handler.postDelayed(fireRunnable, FIRE_DELAY_MS)
@@ -84,6 +96,8 @@ class GameAccessibilityService : AccessibilityService() {
     // Menú no detectado a tiempo (o desaparecido): plan B opcional por coordenadas.
     private fun onMenuTimeout() {
         if (pending == null) return
+        // Con visión calibrada, si el menú no apareció no se toca nada a ciegas.
+        if (vision() != null) { finish(false); return }
         fallback(maxOf(0L, FIRE_DELAY_MS - MENU_TIMEOUT_MS)) // completa los 4 s desde la mano
     }
 
@@ -92,18 +106,33 @@ class GameAccessibilityService : AccessibilityService() {
         fallbackUsed = true
         handler.postDelayed({
             if (pending == null) return@postDelayed
+            val v = vision()
+            if (v != null && !v.menuOpen) { finish(false); return@postDelayed } // menú no visible: no tocar
             val (w, h) = screenSize()
             val p = RoiStore.loadPoint(this, "fire")
             tap(w * p.x, h * p.y) {
-                handler.postDelayed({ lastMethod = "coordenadas"; finish(true) }, 150)
+                if (v != null) {
+                    // Verificación visual: el menú debe cerrarse tras el toque.
+                    handler.postDelayed({ waitMenuClosed(v, SystemClock.elapsedRealtime() + 1500L) }, 200)
+                } else {
+                    handler.postDelayed({ lastMethod = "coordenadas"; finish(true) }, 150)
+                }
             }
         }, wait)
+    }
+
+    private fun waitMenuClosed(v: AutoFireService, until: Long) {
+        if (pending == null) return
+        if (!v.menuOpen) { lastMethod = "visión+coordenadas"; finish(true); return }
+        if (SystemClock.elapsedRealtime() > until) { finish(false); return }
+        handler.postDelayed({ waitMenuClosed(v, until) }, 100)
     }
 
     private fun finish(ok: Boolean) {
         val cb = pending ?: return
         handler.removeCallbacks(timeout)
         handler.removeCallbacks(fireRunnable)
+        handler.removeCallbacks(poll)
         pending = null
         cb(ok)
     }

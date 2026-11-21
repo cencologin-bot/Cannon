@@ -23,6 +23,7 @@ class AutoFireService : Service() {
         const val SHOT_GAP_MS = 250L     // pausa mínima entre disparos mientras sigue verde
         const val RETRY_MS = 1500L       // espera tras un fallo
         const val MAX_FAILURES = 3       // fallos seguidos antes de detener
+        const val MENU_MATCH = 0.85f     // fracción de celdas que debe coincidir para dar el menú por abierto
         @Volatile var instance: AutoFireService? = null
     }
 
@@ -41,6 +42,11 @@ class AutoFireService : Service() {
     private var greenStreak = 0
     private var nextShotAt = 0L
     private var failures = 0
+    private var menuSig: ByteArray? = null
+    private var calibrateMenu = false
+    /** Visión: true mientras la captura coincide con la firma del menú calibrada. */
+    @Volatile var menuOpen = false
+    val hasMenuVision: Boolean get() = menuSig != null
     private var lastStatus = ""
     private var selector: View? = null
     private var previewListener: ((Float, Float, Int) -> Unit)? = null
@@ -52,6 +58,7 @@ class AutoFireService : Service() {
         super.onCreate()
         instance = this
         roi = RoiStore.load(this)
+        menuSig = RoiStore.loadMenuSig(this)
         createChannel()
         startForeground(41, notification("Preparado"))
         window = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -125,6 +132,16 @@ class AutoFireService : Service() {
             val right = (fullW * roi.right).toInt().coerceIn(left + 1, fullW)
             val top = (fullH * roi.top).toInt().coerceIn(0, fullH - 1)
             val bottom = (fullH * roi.bottom).toInt().coerceIn(top + 1, fullH)
+            if (calibrateMenu) {
+                calibrateMenu = false
+                val sig = NativeDetector.menuSignature(buffer, rowStride, pixelStride, fullW, fullH)
+                menuSig = sig
+                RoiStore.saveMenuSig(this, sig)
+                updateStatus("Menú calibrado ✓ (visión activa)")
+            }
+            menuSig?.let {
+                menuOpen = NativeDetector.menuMatch(buffer, rowStride, pixelStride, fullW, fullH, it) >= MENU_MATCH
+            }
             val res = NativeDetector.analyze(buffer, rowStride, pixelStride, left, top, right - left, bottom - top)
             val color = res[2].toInt()
             previewListener?.invoke(res[0], res[1], color)
@@ -203,11 +220,18 @@ class AutoFireService : Service() {
             text = "FUEGO"
             setOnClickListener { showPointPicker("fire", "Abre el menú y marca la opción ¡Fuego!") }
         }
+        val menuCal = Button(this).apply {
+            text = "MENÚ"
+            setOnClickListener {
+                if (projection == null) updateStatus("Falta autorizar captura")
+                else { calibrateMenu = true; updateStatus("Calibrando menú... (debe estar abierto)") }
+            }
+        }
         val planB = Button(this).apply {
             text = planBText()
             setOnClickListener { RoiStore.setPlanB(this@AutoFireService, !RoiStore.planB(this@AutoFireService)); text = planBText() }
         }
-        val extras = listOf(sel, hand, fire, planB)
+        val extras = listOf(sel, hand, fire, menuCal, planB)
         start.visibility = View.GONE
         stop.visibility = View.GONE
         extras.forEach { it.visibility = View.GONE }
