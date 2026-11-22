@@ -40,6 +40,8 @@ class AutoFireService : Service() {
     private var lastFrame = 0L
     private var roi = RoiStore.defaults()
     private var greenStreak = 0
+    private var redStreak = 0
+    private var armed = true   // true = puede disparar en el verde actual
     private var nextShotAt = 0L
     private var failures = 0
     private var menuSig: ByteArray? = null
@@ -146,24 +148,28 @@ class AutoFireService : Service() {
             val color = res[2].toInt()
             previewListener?.invoke(res[0], res[1], color)
             greenStreak = if (color == 2) greenStreak + 1 else 0
+            redStreak = if (color == 1) redStreak + 1 else 0
             val now = SystemClock.elapsedRealtime()
             if (color == 1) {
                 // Faro rojo: no se inician disparos nuevos (el que está en curso termina).
+                if (redStreak >= GREEN_FRAMES) armed = true // rojo confirmado: rearma para el próximo verde
                 if (running) updateStatus("Faro rojo · en pausa")
             } else if (color == 2 && greenStreak >= GREEN_FRAMES) {
+                if (running && !firing && !armed && RoiStore.oneShot(this)) updateStatus("Verde ya usado · esperando rojo")
                 // Faro verde: dispara y repite mientras siga verde; si pasa a rojo se pausa y
                 // al volver a verde continúa solo.
-                if (running && !firing && now >= nextShotAt) {
+                if (running && !firing && now >= nextShotAt && (armed || !RoiStore.oneShot(this))) {
                     firing = true
+                    armed = false
                     updateStatus("Verde · mano, ¡Fuego! en ${"%.1f".format(RoiStore.fireDelayMs(this) / 1000.0)} s")
                     GameAccessibilityService.instance?.performFireSequence { ok ->
                         firing = false
                         val t = SystemClock.elapsedRealtime()
                         if (ok) {
                             shots++; failures = 0; nextShotAt = t + SHOT_GAP_MS
-                            updateStatus("Disparo enviado (${GameAccessibilityService.instance?.lastMethod}) · verde, continúa")
+                            updateStatus("Disparo enviado (${GameAccessibilityService.instance?.lastMethod}) · ${if (RoiStore.oneShot(this)) "esperando rojo" else "verde, continúa"}")
                         } else {
-                            failures++; nextShotAt = t + RETRY_MS
+                            failures++; nextShotAt = t + RETRY_MS; armed = true // no hubo disparo: permite reintentar
                             if (failures >= MAX_FAILURES) {
                                 stopAutomation()
                                 updateStatus("Detenido: no se pudo seleccionar ¡Fuego!")
@@ -172,6 +178,7 @@ class AutoFireService : Service() {
                         updateNotification()
                     } ?: run {
                         firing = false
+                        armed = true
                         nextShotAt = now + 2000
                         updateStatus("Activa el servicio de accesibilidad")
                     }
@@ -187,6 +194,8 @@ class AutoFireService : Service() {
     private var settingsView: View? = null
     private var toggleBtn: TextView? = null
     private var planBBtn: TextView? = null
+    private var oneShotBtn: TextView? = null
+    private fun oneShotText() = if (RoiStore.oneShot(this)) "1 por verde: ON" else "1 por verde: OFF"
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
     private fun pill(color: Int, radius: Int) = android.graphics.drawable.GradientDrawable().apply {
@@ -209,7 +218,7 @@ class AutoFireService : Service() {
 
     private fun startAutomation() {
         if (projection == null) { updateStatus("Falta autorizar captura"); return }
-        running = true; failures = 0; nextShotAt = 0L
+        running = true; failures = 0; nextShotAt = 0L; armed = true; redStreak = 0
         updateStatus("Activo · dispara mientras el faro esté verde")
         setExpanded(false)
     }
@@ -239,6 +248,10 @@ class AutoFireService : Service() {
             RoiStore.setPlanB(this, !RoiStore.planB(this)); refreshUiNow()
         }
         planBBtn = planB
+        val oneShot = chip(oneShotText()) {
+            RoiStore.setOneShot(this, !RoiStore.oneShot(this)); refreshUiNow()
+        }
+        oneShotBtn = oneShot
         val settings = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -251,6 +264,7 @@ class AutoFireService : Service() {
                     if (projection == null) updateStatus("Falta autorizar captura")
                     else { calibrateMenu = true; updateStatus("Calibrando menú... (debe estar abierto)") }
                 } }, planB))
+            addView(row(oneShot))
             addView(row(
                 TextView(this@AutoFireService).apply { text = "Espera ¡Fuego!"; setTextColor(Color.WHITE); textSize = 12f },
                 chip("−") { step(-500L) }, delayLbl, chip("+") { step(500L) }))
@@ -322,6 +336,7 @@ class AutoFireService : Service() {
             background = pill(if (running) Color.rgb(192, 57, 43) else Color.rgb(47, 158, 68), 12)
         }
         planBBtn?.text = planBText()
+        oneShotBtn?.text = oneShotText()
     }
 
     private fun showSelector() {

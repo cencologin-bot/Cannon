@@ -58,4 +58,10 @@ object RoiStore {
     fun setFireDelayMs(c: Context, ms: Long) {
         c.getSharedPreferences("roi", Context.MODE_PRIVATE).edit().putLong("fire_delay", ms).apply()
     }
+
+    /** true = un solo disparo por cada luz verde: hay que ver rojo antes de volver a disparar. */
+    fun oneShot(c: Context) = c.getSharedPreferences("roi", Context.MODE_PRIVATE).getBoolean("oneshot", true)
+    fun setOneShot(c: Context, on: Boolean) {
+        c.getSharedPreferences("roi", Context.MODE_PRIVATE).edit().putBoolean("oneshot", on).apply()
+    }
 }
