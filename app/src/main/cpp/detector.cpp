@@ -22,7 +22,7 @@ static constexpr float R_H0 = 20.f, R_H1 = 340.f, R_S = 0.50f, R_V = 0.45f;
 extern "C"
 JNIEXPORT jfloatArray JNICALL
 Java_com_cannon_autofire_NativeDetector_analyze(JNIEnv* env, jobject, jobject buffer,
-        jint rowStride, jint pixelStride, jint left, jint top, jint width, jint height) {
+        jint rowStride, jint pixelStride, jint left, jint top, jint width, jint height, jboolean lite) {
     jfloat res[3] = {0.f, 0.f, 0.f};
     jfloatArray out = env->NewFloatArray(3);
     auto* base = static_cast<uint8_t*>(env->GetDirectBufferAddress(buffer));
@@ -45,7 +45,13 @@ Java_com_cannon_autofire_NativeDetector_analyze(JNIEnv* env, jobject, jobject bu
             double rr = static_cast<double>(red) / total;
             res[0] = static_cast<jfloat>(gr);
             res[1] = static_cast<jfloat>(rr);
-            if (gr > 0.075 && gr > rr * 1.25) res[2] = 2.f;
+            if (lite) {
+                // Modo Lite (fijo): verde >= 7 % es positivo, rojo >= 6 % es negativo.
+                bool g = gr >= 0.07, r = rr >= 0.06;
+                if (g && r) res[2] = (gr >= rr) ? 2.f : 1.f;
+                else if (g) res[2] = 2.f;
+                else if (r) res[2] = 1.f;
+            } else if (gr > 0.075 && gr > rr * 1.25) res[2] = 2.f;
             else if (rr > 0.075 && rr > gr * 1.15) res[2] = 1.f;
         }
     }
