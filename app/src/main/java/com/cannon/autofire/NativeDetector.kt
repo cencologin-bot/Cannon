@@ -8,10 +8,11 @@ object NativeDetector {
     /**
      * Analiza el recuadro del faro en HSV directamente sobre el buffer de la captura.
      * Devuelve [fracción verde, fracción roja, clase]: 0 = nada, 1 = rojo, 2 = verde. Formato RGBA_8888.
+     * lite = true: verde >= 7 % positivo, rojo >= 6 % negativo (umbrales fijos).
      */
     external fun analyze(
         buffer: ByteBuffer, rowStride: Int, pixelStride: Int,
-        left: Int, top: Int, width: Int, height: Int
+        left: Int, top: Int, width: Int, height: Int, lite: Boolean
     ): FloatArray
 
     /** Firma del menú abierto: rejilla 12x10 de colores medios de la mitad inferior de la pantalla (360 bytes). */

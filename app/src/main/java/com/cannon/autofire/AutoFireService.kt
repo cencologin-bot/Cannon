@@ -144,7 +144,7 @@ class AutoFireService : Service() {
             menuSig?.let {
                 menuOpen = NativeDetector.menuMatch(buffer, rowStride, pixelStride, fullW, fullH, it) >= MENU_MATCH
             }
-            val res = NativeDetector.analyze(buffer, rowStride, pixelStride, left, top, right - left, bottom - top)
+            val res = NativeDetector.analyze(buffer, rowStride, pixelStride, left, top, right - left, bottom - top, RoiStore.lite(this))
             val color = res[2].toInt()
             previewListener?.invoke(res[0], res[1], color)
             greenStreak = if (color == 2) greenStreak + 1 else 0
@@ -195,6 +195,8 @@ class AutoFireService : Service() {
     private var toggleBtn: TextView? = null
     private var planBBtn: TextView? = null
     private var oneShotBtn: TextView? = null
+    private var liteBtn: TextView? = null
+    private fun liteText() = if (RoiStore.lite(this)) "Lite: ON" else "Lite: OFF"
     private fun oneShotText() = if (RoiStore.oneShot(this)) "1 por verde: ON" else "1 por verde: OFF"
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -252,6 +254,10 @@ class AutoFireService : Service() {
             RoiStore.setOneShot(this, !RoiStore.oneShot(this)); refreshUiNow()
         }
         oneShotBtn = oneShot
+        val lite = chip(liteText()) {
+            RoiStore.setLite(this, !RoiStore.lite(this)); refreshUiNow()
+        }
+        liteBtn = lite
         val settings = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
@@ -264,7 +270,7 @@ class AutoFireService : Service() {
                     if (projection == null) updateStatus("Falta autorizar captura")
                     else { calibrateMenu = true; updateStatus("Calibrando menú... (debe estar abierto)") }
                 } }, planB))
-            addView(row(oneShot))
+            addView(row(oneShot, lite))
             addView(row(
                 TextView(this@AutoFireService).apply { text = "Espera ¡Fuego!"; setTextColor(Color.WHITE); textSize = 12f },
                 chip("−") { step(-500L) }, delayLbl, chip("+") { step(500L) }))
@@ -337,6 +343,7 @@ class AutoFireService : Service() {
         }
         planBBtn?.text = planBText()
         oneShotBtn?.text = oneShotText()
+        liteBtn?.text = liteText()
     }
 
     private fun showSelector() {

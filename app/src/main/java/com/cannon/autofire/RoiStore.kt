@@ -64,4 +64,10 @@ object RoiStore {
     fun setOneShot(c: Context, on: Boolean) {
         c.getSharedPreferences("roi", Context.MODE_PRIVATE).edit().putBoolean("oneshot", on).apply()
     }
+
+    /** Modo Lite: verde >= 7 % = positivo, rojo >= 6 % = negativo (umbrales fijos). */
+    fun lite(c: Context) = c.getSharedPreferences("roi", Context.MODE_PRIVATE).getBoolean("lite", false)
+    fun setLite(c: Context, on: Boolean) {
+        c.getSharedPreferences("roi", Context.MODE_PRIVATE).edit().putBoolean("lite", on).apply()
+    }
 }
